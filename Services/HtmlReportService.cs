@@ -19,18 +19,18 @@ public static class HtmlReportService
     private static readonly HashSet<string> VideoNoPreviewExts = new(StringComparer.OrdinalIgnoreCase)
     { ".mov", ".avi", ".mkv", ".wmv", ".flv", ".m4v", ".ts", ".3gp" };
 
-    public static string Generate(DeduplicationResult result, string rootDirectory, string? outputPath = null)
+    public static string Generate(DeduplicationResult result, string rootDirectory, string? outputPath = null, bool isDryRun = false)
     {
         rootDirectory = Path.GetFullPath(rootDirectory);
         outputPath ??= Path.Combine(
             Path.GetDirectoryName(rootDirectory) ?? rootDirectory,
             $"{Path.GetFileName(rootDirectory)}_duplicates_report.html");
 
-        File.WriteAllText(outputPath, BuildHtml(result, rootDirectory), System.Text.Encoding.UTF8);
+        File.WriteAllText(outputPath, BuildHtml(result, rootDirectory, isDryRun), System.Text.Encoding.UTF8);
         return outputPath;
     }
 
-    private static string BuildHtml(DeduplicationResult result, string rootDirectory)
+    private static string BuildHtml(DeduplicationResult result, string rootDirectory, bool isDryRun = false)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -74,9 +74,9 @@ public static class HtmlReportService
                 sb.AppendLine("    <span class=\"ambig\">\u26a0 kept by creation date</span>");
             sb.AppendLine("  </div>");
             sb.AppendLine("  <div class=\"cards\">");
-            sb.Append(Card(group.KeptPath, rootDirectory, isKept: true));
+            sb.Append(Card(group.KeptPath, rootDirectory, isKept: true, isDryRun: isDryRun));
             foreach (var d in group.DuplicatePaths)
-                sb.Append(Card(d, rootDirectory, isKept: false));
+                sb.Append(Card(d, rootDirectory, isKept: false, isDryRun: isDryRun));
             sb.AppendLine("  </div>");
             sb.AppendLine("</section>");
         }
@@ -85,14 +85,16 @@ public static class HtmlReportService
         return sb.ToString();
     }
 
-    private static string Card(string absPath, string rootDirectory, bool isKept)
+    private static string Card(string absPath, string rootDirectory, bool isKept, bool isDryRun = false)
     {
         var rel  = Path.GetRelativePath(rootDirectory, absPath);
         var ext  = Path.GetExtension(absPath);
         var info = File.Exists(absPath) ? new FileInfo(absPath) : null;
         var uri  = isKept 
             ? new Uri(absPath).AbsoluteUri
-            : $"{rootDirectory}{Path.DirectorySeparatorChar}_duples{Path.DirectorySeparatorChar}{rel}";
+            : isDryRun
+                ? new Uri(absPath).AbsoluteUri
+                : $"{rootDirectory.TrimEnd(Path.DirectorySeparatorChar)}{Path.DirectorySeparatorChar}_duples{Path.DirectorySeparatorChar}{rel}";
             
         var name = Path.GetFileName(absPath);
 

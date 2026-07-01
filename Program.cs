@@ -90,7 +90,7 @@ dedupCommand.SetHandler((string dir, string hash, bool dryRun, bool report, stri
 
     if (report)
     {
-        var reportPath = HtmlReportService.Generate(result, fullDir);
+        var reportPath = HtmlReportService.Generate(result, fullDir, isDryRun: dryRun);
         Console.WriteLine();
         Console.WriteLine($"Report: {reportPath}");
     }

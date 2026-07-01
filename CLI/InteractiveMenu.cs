@@ -108,7 +108,7 @@ public static class InteractiveMenu
                 // ── HTML report ──────────────────────────────────────────────
                 if (PromptBool("Generate HTML report with previews?", true))
                 {
-                    var reportPath = HtmlReportService.Generate(result, dir);
+                    var reportPath = HtmlReportService.Generate(result, dir, isDryRun: dryRun);
                     Ok($"Report saved: {reportPath}");
                 }
 

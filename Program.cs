@@ -32,13 +32,17 @@ var dedupDirArg = new Argument<string>("directory", "Directory to scan and dedup
 var reportOption = new Option<bool>(
     name: "--report",
     description: "Generate an HTML report with file previews after scanning");
+var priorityDirOption = new Option<string?>(
+    name: "--priority-dir",
+    description: "Subdirectory whose files are preferred as keepers when deduplicating (must be inside the scanned directory)");
 dedupCommand.AddArgument(dedupDirArg);
 dedupCommand.AddOption(hashOption);
 dedupCommand.AddOption(dryRunOption);
 dedupCommand.AddOption(reportOption);
 dedupCommand.AddOption(filterOption);
+dedupCommand.AddOption(priorityDirOption);
 
-dedupCommand.SetHandler((string dir, string hash, bool dryRun, bool report, string? filterArg) =>
+dedupCommand.SetHandler((string dir, string hash, bool dryRun, bool report, string? filterArg, string? priorityDirArg) =>
 {
     var fullDir = Path.GetFullPath(dir);
     if (!Directory.Exists(fullDir))
@@ -49,15 +53,34 @@ dedupCommand.SetHandler((string dir, string hash, bool dryRun, bool report, stri
 
     var filter = BuildFilter(filterArg);
 
+    string? priorityDir = null;
+    if (priorityDirArg is not null)
+    {
+        var fullPriority = Path.GetFullPath(priorityDirArg);
+        if (!Directory.Exists(fullPriority))
+        {
+            Console.Error.WriteLine($"Priority directory not found: {fullPriority}");
+            Environment.Exit(1);
+        }
+        if (!fullPriority.StartsWith(fullDir, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"Priority directory must be inside the scanned directory.");
+            Environment.Exit(1);
+        }
+        priorityDir = fullPriority;
+    }
+
     Console.WriteLine($"Deduplicating: {fullDir}");
     Console.WriteLine($"Hash         : {hash.ToUpperInvariant()}");
     Console.WriteLine($"Dry run      : {dryRun}");
     if (!filter.IsPassAll)
         Console.WriteLine($"Filter       : {filter}");
+    if (priorityDir is not null)
+        Console.WriteLine($"Priority dir : {priorityDir}");
     Console.WriteLine();
 
     var comparers = BuildComparers(hash);
-    var service   = new DeduplicatorService(comparers, filter);
+    var service   = new DeduplicatorService(comparers, filter, priorityDir);
     var result = service.Deduplicate(fullDir, dryRun);
 
     Console.WriteLine();
@@ -94,7 +117,7 @@ dedupCommand.SetHandler((string dir, string hash, bool dryRun, bool report, stri
         Console.WriteLine();
         Console.WriteLine($"Report: {reportPath}");
     }
-}, dedupDirArg, hashOption, dryRunOption, reportOption, filterOption);
+}, dedupDirArg, hashOption, dryRunOption, reportOption, filterOption, priorityDirOption);
 
 // ── merge command ─────────────────────────────────────────────────────────────
 var mergeCommand = new Command(

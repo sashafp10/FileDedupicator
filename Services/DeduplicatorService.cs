@@ -48,11 +48,13 @@ public sealed class DeduplicatorService
 
     private readonly IReadOnlyList<IFilesComparer> _comparers;
     private readonly FileTypeFilter _filter;
+    private readonly string? _priorityDirectory;
 
-    public DeduplicatorService(IReadOnlyList<IFilesComparer> comparers, FileTypeFilter? filter = null)
+    public DeduplicatorService(IReadOnlyList<IFilesComparer> comparers, FileTypeFilter? filter = null, string? priorityDirectory = null)
     {
-        _comparers = comparers;
-        _filter    = filter ?? FileTypeFilter.PassAll;
+        _comparers         = comparers;
+        _filter            = filter ?? FileTypeFilter.PassAll;
+        _priorityDirectory = priorityDirectory is null ? null : Path.GetFullPath(priorityDirectory);
     }
 
     public DeduplicationResult Deduplicate(string directory, bool dryRun)
@@ -96,7 +98,7 @@ public sealed class DeduplicatorService
 
                 foreach (var component in dupGroups)
                 {
-                    var keeper    = PickKeeper(component);
+                    var keeper    = PickKeeper(component, _priorityDirectory);
                     var keptScore = CopyNameScorer.Score(Path.GetFileName(keeper));
                     var dg        = new DuplicateGroup { KeptPath = keeper, KeptScore = keptScore };
 
@@ -159,9 +161,10 @@ public sealed class DeduplicatorService
             .ToList();
     }
 
-    private static string PickKeeper(List<string> group) =>
+    private static string PickKeeper(List<string> group, string? priorityDirectory = null) =>
         group
-            .OrderBy(f => CopyNameScorer.Score(Path.GetFileName(f)))
+            .OrderBy(f  => priorityDirectory is null || !f.StartsWith(priorityDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ThenBy(f  => CopyNameScorer.Score(Path.GetFileName(f)))
             .ThenBy(f  => new FileInfo(f).CreationTimeUtc)
             .ThenBy(f  => Path.GetFileName(f).Length)
             .ThenBy(f  => f, StringComparer.OrdinalIgnoreCase)

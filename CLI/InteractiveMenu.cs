@@ -45,14 +45,15 @@ public static class InteractiveMenu
         var dir = PromptDirectory("Directory to deduplicate");
         if (dir is null) return;
 
-        var hash   = PromptHash();
-        var filter = PromptFilter();
-        var dryRun = PromptBool("Dry run (preview only, no files will be moved)", false);
+        var hash     = PromptHash();
+        var filter   = PromptFilter();
+        var priority = PromptPriorityDir(dir);
+        var dryRun   = PromptBool("Dry run (preview only, no files will be moved)", false);
 
         Console.WriteLine();
 
         var comparers = BuildComparers(hash);
-        var service   = new DeduplicatorService(comparers, filter);
+        var service   = new DeduplicatorService(comparers, filter, priority);
 
         try
         {
@@ -68,6 +69,8 @@ public static class InteractiveMenu
             Info($"Files to move: {result.Moves.Count}");
             if (result.SkippedByFilter > 0)
                 Info($"Skipped (filter): {result.SkippedByFilter} files");
+            if (priority is not null)
+                Info($"Priority folder : {Path.GetRelativePath(dir, priority)}");
 
             if (result.Groups.Count == 0)
             {
@@ -387,6 +390,27 @@ public static class InteractiveMenu
         }
 
         return filter;
+    }
+
+    private static string? PromptPriorityDir(string rootDir)
+    {
+        Console.Write("  Priority folder (files here are preferred as keepers, Enter to skip): ");
+        var input = Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(input)) return null;
+
+        var full = Path.IsPathRooted(input) ? Path.GetFullPath(input) : Path.GetFullPath(Path.Combine(rootDir, input));
+        if (!Directory.Exists(full))
+        {
+            Warn($"Directory not found: {full} — no priority folder set.");
+            return null;
+        }
+        if (!full.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+        {
+            Warn($"Priority folder must be inside the scanned directory — no priority folder set.");
+            return null;
+        }
+        Ok($"Priority folder: {Path.GetRelativePath(rootDir, full)}");
+        return full;
     }
 
     private static string? PromptDirectory(string label)

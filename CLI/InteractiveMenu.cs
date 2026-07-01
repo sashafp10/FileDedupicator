@@ -1,5 +1,6 @@
 using FilesDeduplicator.Comparers;
 using FilesDeduplicator.Interfaces;
+using FilesDeduplicator.Models;
 using FilesDeduplicator.Services;
 using FilesDeduplicator.Utils;
 
@@ -45,12 +46,13 @@ public static class InteractiveMenu
         if (dir is null) return;
 
         var hash   = PromptHash();
+        var filter = PromptFilter();
         var dryRun = PromptBool("Dry run (preview only, no files will be moved)", false);
 
         Console.WriteLine();
 
         var comparers = BuildComparers(hash);
-        var service   = new DeduplicatorService(comparers);
+        var service   = new DeduplicatorService(comparers, filter);
 
         try
         {
@@ -64,6 +66,8 @@ public static class InteractiveMenu
             Info($"Scanned      : {result.TotalScanned} files");
             Info($"Groups found : {result.Groups.Count}");
             Info($"Files to move: {result.Moves.Count}");
+            if (result.SkippedByFilter > 0)
+                Info($"Skipped (filter): {result.SkippedByFilter} files");
 
             if (result.Groups.Count == 0)
             {
@@ -99,7 +103,7 @@ public static class InteractiveMenu
                 }
 
                 // ── Write operation log ──────────────────────────────────────
-                WriteLog(result, dir, dryRun);
+                WriteLog(result, dir, dryRun, filter);
 
                 // ── HTML report ──────────────────────────────────────────────
                 if (PromptBool("Generate HTML report with previews?", true))
@@ -225,6 +229,7 @@ public static class InteractiveMenu
         if (string.IsNullOrWhiteSpace(outFolder)) return;
 
         var hash      = PromptHash();
+        var filter    = PromptFilter();
         var dryRun    = PromptBool("Dry run (preview only, no files will be moved)", false);
         var rebuildDb = PromptBool("Rebuild file databases (ignore cached DBs)", false);
 
@@ -232,7 +237,7 @@ public static class InteractiveMenu
 
         var comparers  = BuildComparers(hash);
         var dbService  = new FilesDbService(hash);
-        var service    = new MergeService(comparers, dbService);
+        var service    = new MergeService(comparers, dbService, filter);
 
         try
         {
@@ -243,6 +248,8 @@ public static class InteractiveMenu
             Info($"Unique files → outfolder  : {result.UniqueFiles.Count}");
             Info($"Duplicates   → _duples    : {result.DuplicateFiles.Count}");
             Info($"Conflicts (skipped)       : {result.Conflicts.Count}");
+            if (result.PassthroughFiles.Count > 0)
+                Info($"Passthrough (filter)      : {result.PassthroughFiles.Count}");
 
             if (dryRun)
             {
@@ -275,7 +282,7 @@ public static class InteractiveMenu
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static void WriteLog(DeduplicationResult result, string dir, bool dryRun)
+    private static void WriteLog(DeduplicationResult result, string dir, bool dryRun, FileTypeFilter? filter = null)
     {
         try
         {
@@ -283,12 +290,14 @@ public static class InteractiveMenu
 
             log.WriteLine($"FilesDeduplicator — Deduplication Log");
             log.WriteLine($"======================================");
-            log.WriteLine($"Timestamp   : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            log.WriteLine($"Directory   : {dir}");
-            log.WriteLine($"Dry run     : {dryRun}");
-            log.WriteLine($"Scanned     : {result.TotalScanned} files");
-            log.WriteLine($"Groups      : {result.Groups.Count}");
-            log.WriteLine($"Duplicates  : {result.Moves.Count}");
+            log.WriteLine($"Timestamp      : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            log.WriteLine($"Directory      : {dir}");
+            log.WriteLine($"Dry run        : {dryRun}");
+            log.WriteLine($"Filter         : {filter?.ToString() ?? "(all files)"}");
+            log.WriteLine($"Scanned        : {result.TotalScanned} files");
+            log.WriteLine($"Skipped/filter : {result.SkippedByFilter} files");
+            log.WriteLine($"Groups         : {result.Groups.Count}");
+            log.WriteLine($"Duplicates     : {result.Moves.Count}");
             log.WriteLine();
 
             int idx = 0;
@@ -325,6 +334,60 @@ public static class InteractiveMenu
             new HashComparer(hash),
             new ByteByByteComparer()
         };
+
+    private static FileTypeFilter PromptFilter()
+    {
+        var configService = new AppConfigService();
+        var config        = configService.Load();
+
+        if (config.Presets.Count == 0)
+            return FileTypeFilter.PassAll;
+
+        Console.WriteLine();
+        Console.WriteLine("  File type filter:");
+        Console.WriteLine("    0  All files (no filter)");
+        for (int i = 0; i < config.Presets.Count; i++)
+            Console.WriteLine($"    {i + 1}  {config.Presets[i].Name}  [{config.Presets[i].Key}]");
+        Console.WriteLine($"    {config.Presets.Count + 1}  Custom extensions (e.g. cs,exe,log)");
+        Console.WriteLine();
+        Console.Write("  Select one or more (comma-separated, e.g. 1,2): ");
+        var input = Console.ReadLine()?.Trim() ?? "";
+
+        if (string.IsNullOrWhiteSpace(input) || input == "0")
+            return FileTypeFilter.PassAll;
+
+        var selectedKeys = new List<string>();
+        string? customExtensions = null;
+        int customIdx = config.Presets.Count + 1;
+
+        foreach (var token in input.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (int.TryParse(token.Trim(), out int n))
+            {
+                if (n == 0) return FileTypeFilter.PassAll;
+                if (n == customIdx)
+                {
+                    Console.Write("  Custom extensions: ");
+                    customExtensions = Console.ReadLine()?.Trim();
+                }
+                else if (n >= 1 && n <= config.Presets.Count)
+                {
+                    selectedKeys.Add(config.Presets[n - 1].Key);
+                }
+            }
+        }
+
+        var filter = FileTypeFilter.Build(config, selectedKeys, customExtensions);
+
+        if (!filter.IsPassAll)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkCyan;
+            Console.WriteLine($"  Active filter: {filter}");
+            Console.ResetColor();
+        }
+
+        return filter;
+    }
 
     private static string? PromptDirectory(string label)
     {

@@ -14,6 +14,9 @@ public sealed class MergeResult
 
     /// <summary>Files that could not be moved due to path conflicts in outfolder.</summary>
     public List<(string Source, string ConflictingTarget)> Conflicts { get; } = new();
+
+    /// <summary>Files skipped by the extension filter — copied to outfolder as-is without dedup check.</summary>
+    public List<(string Source, string Destination)> PassthroughFiles { get; } = new();
 }
 
 /// <summary>
@@ -32,11 +35,13 @@ public sealed class MergeService
 
     private readonly IReadOnlyList<IFilesComparer> _comparers;
     private readonly FilesDbService _dbService;
+    private readonly FileTypeFilter _filter;
 
-    public MergeService(IReadOnlyList<IFilesComparer> comparers, FilesDbService dbService)
+    public MergeService(IReadOnlyList<IFilesComparer> comparers, FilesDbService dbService, FileTypeFilter? filter = null)
     {
         _comparers = comparers;
         _dbService = dbService;
+        _filter    = filter ?? FileTypeFilter.PassAll;
     }
 
     public MergeResult Merge(
@@ -79,6 +84,14 @@ public sealed class MergeService
 
             if (!File.Exists(srcPath))
                 continue; // file disappeared since DB was built
+
+            // Files excluded by the filter are copied to outfolder as-is (no dedup check)
+            if (!_filter.Includes(srcPath))
+            {
+                var passthroughDst = Path.Combine(outFolder, inRecord.RelativePath);
+                result.PassthroughFiles.Add((srcPath, passthroughDst));
+                continue;
+            }
 
             if (!outBySize.TryGetValue(inRecord.SizeBytes, out var candidates))
             {
@@ -134,7 +147,7 @@ public sealed class MergeService
         // ── Apply moves ──────────────────────────────────────────────────────
         if (!dryRun)
         {
-            int totalMoves = result.DuplicateFiles.Count + result.UniqueFiles.Count;
+            int totalMoves = result.DuplicateFiles.Count + result.UniqueFiles.Count + result.PassthroughFiles.Count;
             if (totalMoves > 0)
             {
                 Console.WriteLine();
@@ -152,6 +165,13 @@ public sealed class MergeService
                     Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                     File.Move(src, dst);
                     moveProgress.Advance(movedFile: $"{Path.GetRelativePath(inFolder, src)}  →  outfolder");
+                }
+
+                foreach (var (src, dst) in result.PassthroughFiles)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                    File.Copy(src, dst, overwrite: false);
+                    moveProgress.Advance(movedFile: $"{Path.GetRelativePath(inFolder, src)}  →  passthrough");
                 }
             }
         }

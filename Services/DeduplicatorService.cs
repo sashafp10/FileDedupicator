@@ -27,6 +27,8 @@ public sealed class DeduplicationResult
     public List<(string Source, string Destination)> Moves { get; } = new();
     public List<DuplicateGroup> Groups { get; } = new();
     public int TotalScanned { get; set; }
+    /// <summary>Files excluded from comparison because their extension was not in the active filter.</summary>
+    public int SkippedByFilter { get; set; }
 }
 
 /// <summary>
@@ -45,10 +47,12 @@ public sealed class DeduplicatorService
     private const string DuplesFolder = "_duples";
 
     private readonly IReadOnlyList<IFilesComparer> _comparers;
+    private readonly FileTypeFilter _filter;
 
-    public DeduplicatorService(IReadOnlyList<IFilesComparer> comparers)
+    public DeduplicatorService(IReadOnlyList<IFilesComparer> comparers, FileTypeFilter? filter = null)
     {
         _comparers = comparers;
+        _filter    = filter ?? FileTypeFilter.PassAll;
     }
 
     public DeduplicationResult Deduplicate(string directory, bool dryRun)
@@ -63,8 +67,12 @@ public sealed class DeduplicatorService
 
         result.TotalScanned = allFiles.Count;
 
+        // Partition: files that pass the filter go into dedup; others are simply left alone
+        var filteredFiles = allFiles.Where(f => _filter.Includes(f)).ToList();
+        result.SkippedByFilter = allFiles.Count - filteredFiles.Count;
+
         // Only size-groups with >1 member are candidates
-        var sizeGroups = allFiles
+        var sizeGroups = filteredFiles
             .GroupBy(f => new FileInfo(f).Length)
             .Where(g => g.Count() > 1)
             .Select(g => g.ToList())
@@ -74,6 +82,9 @@ public sealed class DeduplicatorService
 
         // ── Phase 1: compare ─────────────────────────────────────────────────
         Console.WriteLine($"  Files to scan         : {result.TotalScanned}");
+        if (!_filter.IsPassAll)
+            Console.WriteLine($"  Filter (extensions)   : {_filter}");
+        Console.WriteLine($"  Filtered candidates   : {filteredFiles.Count}");
         Console.WriteLine($"  Size-group candidates : {candidateCount}");
         Console.WriteLine();
 

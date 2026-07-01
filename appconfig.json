@@ -1,0 +1,50 @@
+{
+  "presets": [
+    {
+      "name": "All Images",
+      "key": "images",
+      "extensions": [
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+        ".svg", ".ico", ".tiff", ".tif", ".avif", ".heic",
+        ".heif", ".raw", ".cr2", ".nef", ".orf", ".arw",
+        ".dng", ".psd", ".xcf", ".ai"
+      ]
+    },
+    {
+      "name": "All Videos",
+      "key": "videos",
+      "extensions": [
+        ".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm",
+        ".ogv", ".wmv", ".flv", ".ts", ".mts", ".m2ts",
+        ".3gp", ".3g2", ".f4v", ".vob", ".divx", ".xvid",
+        ".mpg", ".mpeg", ".m2v", ".rmvb", ".asf"
+      ]
+    },
+    {
+      "name": "All Audio",
+      "key": "audio",
+      "extensions": [
+        ".mp3", ".flac", ".aac", ".ogg", ".m4a", ".wav",
+        ".wma", ".opus", ".ape", ".alac", ".aiff", ".aif",
+        ".dsf", ".dff", ".wv", ".tta", ".ra", ".rm"
+      ]
+    },
+    {
+      "name": "Documents",
+      "key": "docs",
+      "extensions": [
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt",
+        ".pptx", ".odt", ".ods", ".odp", ".rtf", ".txt",
+        ".md", ".csv", ".json", ".xml"
+      ]
+    },
+    {
+      "name": "Archives",
+      "key": "archives",
+      "extensions": [
+        ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2",
+        ".xz", ".tgz", ".tbz2", ".cab", ".iso", ".dmg"
+      ]
+    }
+  ]
+}

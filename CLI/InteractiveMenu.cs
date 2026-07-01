@@ -45,15 +45,14 @@ public static class InteractiveMenu
         var dir = PromptDirectory("Directory to deduplicate");
         if (dir is null) return;
 
-        var hash     = PromptHash();
-        var filter   = PromptFilter();
-        var priority = PromptPriorityDir(dir);
-        var dryRun   = PromptBool("Dry run (preview only, no files will be moved)", false);
+        var hash   = PromptHash();
+        var filter = PromptFilter();
+        var dryRun = PromptBool("Dry run (preview only, no files will be moved)", false);
 
         Console.WriteLine();
 
         var comparers = BuildComparers(hash);
-        var service   = new DeduplicatorService(comparers, filter, priority);
+        var service   = new DeduplicatorService(comparers, filter);
 
         try
         {
@@ -69,8 +68,6 @@ public static class InteractiveMenu
             Info($"Files to move: {result.Moves.Count}");
             if (result.SkippedByFilter > 0)
                 Info($"Skipped (filter): {result.SkippedByFilter} files");
-            if (priority is not null)
-                Info($"Priority folder : {Path.GetRelativePath(dir, priority)}");
 
             if (result.Groups.Count == 0)
             {
@@ -78,7 +75,15 @@ public static class InteractiveMenu
             }
             else
             {
-                // ── Groups summary (console) ─────────────────────────────────
+                // ── Post-scan priority prompt ────────────────────────────────
+                var priority = PromptPriorityAfterScan(result, dir);
+                if (priority is not null)
+                {
+                    ApplyPriority(result, dir, priority);
+                    Ok($"Priority applied: {GetTopRelDir(priority, dir)}");
+                }
+
+                // ── Groups summary (console) ───────────────────────────────
                 Console.WriteLine();
                 Console.WriteLine(dryRun ? "  [DRY RUN] Duplicate groups:" : "  Duplicate groups:");
 
@@ -392,25 +397,106 @@ public static class InteractiveMenu
         return filter;
     }
 
-    private static string? PromptPriorityDir(string rootDir)
+    /// <summary>
+    /// After scanning, detects groups spanning multiple subfolders and asks the user
+    /// to pick one folder as the keeper-priority. Returns the chosen full path, or null.
+    /// </summary>
+    private static string? PromptPriorityAfterScan(DeduplicationResult result, string rootDir)
     {
-        Console.Write("  Priority folder (files here are preferred as keepers, Enter to skip): ");
-        var input = Console.ReadLine()?.Trim();
-        if (string.IsNullOrEmpty(input)) return null;
+        // Only consider groups where files live in ≥2 distinct top-level subdirs
+        var crossFolderGroups = result.Groups
+            .Where(g =>
+            {
+                var files = new[] { g.KeptPath }.Concat(g.DuplicatePaths);
+                return files
+                    .Select(f => GetTopRelDir(f, rootDir))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count() > 1;
+            })
+            .ToList();
 
-        var full = Path.IsPathRooted(input) ? Path.GetFullPath(input) : Path.GetFullPath(Path.Combine(rootDir, input));
-        if (!Directory.Exists(full))
-        {
-            Warn($"Directory not found: {full} — no priority folder set.");
+        if (crossFolderGroups.Count == 0) return null;
+
+        // Collect unique subdirectory names across all such groups
+        var folders = crossFolderGroups
+            .SelectMany(g => new[] { g.KeptPath }.Concat(g.DuplicatePaths))
+            .Select(f => GetTopRelDir(f, rootDir))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(f => f)
+            .ToList();
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"  {crossFolderGroups.Count} group(s) span multiple folders.");
+        Console.WriteLine(  "  Which folder should be preferred as keeper?");
+        Console.ResetColor();
+        for (int i = 0; i < folders.Count; i++)
+            Console.WriteLine($"    {i + 1}. {folders[i]}");
+        Console.WriteLine(  "    0. No priority (keep current selection)");
+        Console.Write("  Enter number: ");
+
+        var input = Console.ReadLine()?.Trim();
+        if (!int.TryParse(input, out int choice) || choice < 1 || choice > folders.Count)
             return null;
-        }
-        if (!full.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+
+        var chosen = folders[choice - 1];
+        return chosen == "." ? rootDir : Path.Combine(rootDir, chosen);
+    }
+
+    /// <summary>
+    /// Re-assigns keepers for every group that has a candidate inside <paramref name="priorityDir"/>.
+    /// Also updates the Moves list to reflect the change.
+    /// </summary>
+    private static void ApplyPriority(DeduplicationResult result, string rootDir, string priorityDir)
+    {
+        var prefix = priorityDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        bool InPriority(string f) =>
+            f.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(f, priorityDir, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var group in result.Groups)
         {
-            Warn($"Priority folder must be inside the scanned directory — no priority folder set.");
-            return null;
+            var allFiles = new[] { group.KeptPath }.Concat(group.DuplicatePaths).ToList();
+
+            // Best candidate from the priority folder (same tie-breaking as PickKeeper)
+            var candidate = allFiles
+                .Where(InPriority)
+                .OrderBy(f  => CopyNameScorer.Score(Path.GetFileName(f)))
+                .ThenBy(f  => new FileInfo(f).CreationTimeUtc)
+                .ThenBy(f  => Path.GetFileName(f).Length)
+                .ThenBy(f  => f, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+
+            if (candidate is null || candidate == group.KeptPath) continue;
+
+            // Swap: candidate becomes keeper, old keeper becomes a dupe
+            var oldKeeper = group.KeptPath;
+            group.KeptPath = candidate;
+            group.DuplicatePaths.Remove(candidate);
+            group.DuplicatePaths.Add(oldKeeper);
+            group.NamingWasAmbiguous = false; // user made an explicit choice
+
+            // Remove any move scheduled for the new keeper (it stays in place)
+            var existingIdx = result.Moves.FindIndex(m => m.Source == candidate);
+            if (existingIdx >= 0) result.Moves.RemoveAt(existingIdx);
+
+            // Add a move for the old keeper if not already scheduled
+            if (!result.Moves.Any(m => m.Source == oldKeeper))
+            {
+                var rel  = Path.GetRelativePath(rootDir, oldKeeper);
+                var dest = Path.Combine(rootDir, "_duples", rel);
+                result.Moves.Add((oldKeeper, dest));
+            }
         }
-        Ok($"Priority folder: {Path.GetRelativePath(rootDir, full)}");
-        return full;
+    }
+
+    /// <summary>Returns the top-level subfolder name relative to rootDir, or "." if the file is directly in rootDir.</summary>
+    private static string GetTopRelDir(string filePath, string rootDir)
+    {
+        var rel = Path.GetRelativePath(rootDir, filePath);
+        var idx = rel.IndexOf(Path.DirectorySeparatorChar);
+        return idx < 0 ? "." : rel[..idx];
     }
 
     private static string? PromptDirectory(string label)

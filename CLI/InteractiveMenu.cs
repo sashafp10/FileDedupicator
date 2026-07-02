@@ -279,6 +279,8 @@ public static class InteractiveMenu
                 foreach (var (src, dst) in result.Conflicts)
                     Console.WriteLine($"    {src}  conflicts with  {dst}");
             }
+
+            WriteMergeLog(result, inFolder, outFolder, dryRun, filter);
         }
         catch (Exception ex)
         {
@@ -289,6 +291,66 @@ public static class InteractiveMenu
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static void WriteMergeLog(MergeResult result, string inFolder, string outFolder,
+        bool dryRun, FileTypeFilter? filter = null)
+    {
+        try
+        {
+            using var log = OperationLogger.Create(inFolder, "merge");
+
+            log.WriteLine("FilesDeduplicator — Merge Log");
+            log.WriteLine("==============================");
+            log.WriteLine($"Timestamp      : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            log.WriteLine($"Input folder   : {inFolder}");
+            log.WriteLine($"Output folder  : {outFolder}");
+            log.WriteLine($"Dry run        : {dryRun}");
+            log.WriteLine($"Filter         : {filter?.ToString() ?? "(all files)"}");
+            log.WriteLine($"Unique → out   : {result.UniqueFiles.Count}");
+            log.WriteLine($"Dupes → _duples: {result.DuplicateFiles.Count}");
+            log.WriteLine($"Conflicts      : {result.Conflicts.Count}");
+            log.WriteLine($"Passthrough    : {result.PassthroughFiles.Count}");
+            log.WriteLine();
+
+            if (result.UniqueFiles.Count > 0)
+            {
+                log.WriteLine(dryRun ? "[DRY RUN] Would move (unique):" : "Moved (unique):");
+                foreach (var (src, dst) in result.UniqueFiles)
+                    log.WriteLine($"  {src}  →  {dst}");
+                log.WriteLine();
+            }
+
+            if (result.DuplicateFiles.Count > 0)
+            {
+                log.WriteLine(dryRun ? "[DRY RUN] Would move (duplicates → _duples):" : "Moved (duplicates → _duples):");
+                foreach (var (src, dst) in result.DuplicateFiles)
+                    log.WriteLine($"  {src}  →  {dst}");
+                log.WriteLine();
+            }
+
+            if (result.Conflicts.Count > 0)
+            {
+                log.WriteLine("Conflicts (skipped):");
+                foreach (var (src, dst) in result.Conflicts)
+                    log.WriteLine($"  {src}  conflicts with  {dst}");
+                log.WriteLine();
+            }
+
+            if (result.PassthroughFiles.Count > 0)
+            {
+                log.WriteLine("Passthrough (filtered, copied as-is):");
+                foreach (var f in result.PassthroughFiles)
+                    log.WriteLine($"  {f}");
+                log.WriteLine();
+            }
+
+            Ok($"Log saved   : {log.FilePath}");
+        }
+        catch (Exception ex)
+        {
+            Warn($"Could not write log: {ex.Message}");
+        }
+    }
 
     private static void WriteLog(DeduplicationResult result, string dir, bool dryRun, FileTypeFilter? filter = null)
     {

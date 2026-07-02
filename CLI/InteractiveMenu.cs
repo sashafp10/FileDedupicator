@@ -56,7 +56,8 @@ public static class InteractiveMenu
 
         try
         {
-            var result = service.Deduplicate(dir, dryRun);
+            // Phase 1: scan only — no files moved yet
+            var result = service.Scan(dir);
 
             // Stash for option 3
             _lastResult = result;
@@ -109,6 +110,10 @@ public static class InteractiveMenu
                     }
                     Console.WriteLine();
                 }
+
+                // ── Execute moves (phase 2) ─────────────────────────────────
+                if (!dryRun && result.Moves.Count > 0)
+                    DeduplicatorService.ExecuteMoves(result, dir);
 
                 // ── Write operation log ──────────────────────────────────────
                 WriteLog(result, dir, dryRun, filter);

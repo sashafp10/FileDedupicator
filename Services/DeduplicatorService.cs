@@ -59,6 +59,15 @@ public sealed class DeduplicatorService
 
     public DeduplicationResult Deduplicate(string directory, bool dryRun)
     {
+        var result = Scan(directory);
+        if (!dryRun)
+            ExecuteMoves(result, directory);
+        return result;
+    }
+
+    /// <summary>Phase 1 only: scan, group, pick keepers. No files are moved.</summary>
+    public DeduplicationResult Scan(string directory)
+    {
         directory = Path.GetFullPath(directory);
         var result = new DeduplicationResult();
 
@@ -69,11 +78,9 @@ public sealed class DeduplicatorService
 
         result.TotalScanned = allFiles.Count;
 
-        // Partition: files that pass the filter go into dedup; others are simply left alone
         var filteredFiles = allFiles.Where(f => _filter.Includes(f)).ToList();
         result.SkippedByFilter = allFiles.Count - filteredFiles.Count;
 
-        // Only size-groups with >1 member are candidates
         var sizeGroups = filteredFiles
             .GroupBy(f => new FileInfo(f).Length)
             .Where(g => g.Count() > 1)
@@ -82,7 +89,6 @@ public sealed class DeduplicatorService
 
         int candidateCount = sizeGroups.Sum(g => g.Count);
 
-        // ── Phase 1: compare ─────────────────────────────────────────────────
         Console.WriteLine($"  Files to scan         : {result.TotalScanned}");
         if (!_filter.IsPassAll)
             Console.WriteLine($"  Filter (extensions)   : {_filter}");
@@ -118,24 +124,27 @@ public sealed class DeduplicatorService
                     result.Groups.Add(dg);
                 }
             }
-        } // progress line cleared on dispose
-
-        // ── Phase 2: move ────────────────────────────────────────────────────
-        if (!dryRun && result.Moves.Count > 0)
-        {
-            Console.WriteLine();
-            using var moveProgress = new ProgressReporter(result.Moves.Count, "Moving");
-
-            foreach (var (src, dst) in result.Moves)
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-                File.Move(src, dst);
-                moveProgress.Advance(
-                    movedFile: $"{Path.GetRelativePath(directory, src)}  →  _duples{Path.DirectorySeparatorChar}{Path.GetRelativePath(directory, src)}");
-            }
         }
 
         return result;
+    }
+
+    /// <summary>Phase 2 only: execute the moves recorded in <paramref name="result"/>.</summary>
+    public static void ExecuteMoves(DeduplicationResult result, string directory)
+    {
+        directory = Path.GetFullPath(directory);
+        if (result.Moves.Count == 0) return;
+
+        Console.WriteLine();
+        using var moveProgress = new ProgressReporter(result.Moves.Count, "Moving");
+
+        foreach (var (src, dst) in result.Moves)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            File.Move(src, dst);
+            moveProgress.Advance(
+                movedFile: $"{Path.GetRelativePath(directory, src)}  →  _duples{Path.DirectorySeparatorChar}{Path.GetRelativePath(directory, src)}");
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────

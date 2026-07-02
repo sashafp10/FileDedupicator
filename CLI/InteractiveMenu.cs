@@ -76,10 +76,11 @@ public static class InteractiveMenu
             }
             else
             {
-                // ── Post-scan priority prompt ────────────────────────────────
-                var priority = PromptPriorityAfterScan(result, dir);
-                if (priority is not null)
+                // ── Post-scan priority prompt (loop until resolved or skipped) ──
+                while (true)
                 {
+                    var priority = PromptPriorityAfterScan(result, dir);
+                    if (priority is null) break;
                     ApplyPriority(result, dir, priority);
                     Ok($"Priority applied: {GetTopRelDir(priority, dir)}");
                 }
